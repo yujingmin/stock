@@ -1,0 +1,35 @@
+.notification-center {
+  padding: 24px;
+}
+
+.notification-item {
+  padding: 16px;
+  transition: background-color 0.3s;
+  border-radius: 4px;
+}
+
+.notification-item:hover {
+  background-color: #fafafa;
+}
+
+.notification-item.unread {
+  background-color: #f0f5ff;
+  border-left: 3px solid #1890ff;
+}
+
+.notification-item.unread:hover {
+  background-color: #e6f0ff;
+}
+
+.notification-item .ant-list-item-meta-title {
+  margin-bottom: 8px;
+}
+
+.notification-item .ant-list-item-meta-description {
+  color: #666;
+}
+
+.notification-item .ant-badge-dot {
+  width: 8px;
+  height: 8px;
+}

@@ -1,0 +1,21 @@
+.notification-analytics {
+  padding: 24px;
+}
+
+.notification-analytics .ant-card {
+  margin-bottom: 0;
+}
+
+.notification-analytics .ant-statistic {
+  text-align: center;
+}
+
+.notification-analytics .ant-statistic-title {
+  font-size: 14px;
+  color: #666;
+}
+
+.notification-analytics .ant-statistic-content {
+  font-size: 24px;
+  font-weight: bold;
+}

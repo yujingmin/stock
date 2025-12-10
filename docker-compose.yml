@@ -1,0 +1,165 @@
+version: '3.8'
+
+services:
+  # PostgreSQL - 用户数据、策略配置、交易记录、风控规则
+  postgres:
+    image: postgres:15-alpine
+    container_name: quant-postgres
+    environment:
+      POSTGRES_DB: quant_platform
+      POSTGRES_USER: quant_user
+      POSTGRES_PASSWORD: quant_password_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - quant-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant_user -d quant_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB - 策略代码、回测报告、通知日志
+  mongodb:
+    image: mongo:7.0
+    container_name: quant-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: quant_user
+      MONGO_INITDB_ROOT_PASSWORD: quant_password_dev
+      MONGO_INITDB_DATABASE: quant_platform
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - quant-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis - 缓存、会话管理、任务队列
+  redis:
+    image: redis:7-alpine
+    container_name: quant-redis
+    command: redis-server --requirepass quant_password_dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - quant-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # InfluxDB - 时序行情数据
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: quant-influxdb
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: quant_user
+      DOCKER_INFLUXDB_INIT_PASSWORD: quant_password_dev
+      DOCKER_INFLUXDB_INIT_ORG: quant_platform
+      DOCKER_INFLUXDB_INIT_BUCKET: market_data
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: quant_influxdb_token_dev
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    networks:
+      - quant-network
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API Server (开发环境使用热重载)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: quant-backend
+    environment:
+      - DATABASE_URL=postgresql://quant_user:quant_password_dev@postgres:5432/quant_platform
+      - MONGODB_URL=mongodb://quant_user:quant_password_dev@mongodb:27017/quant_platform
+      - REDIS_URL=redis://:quant_password_dev@redis:6379/0
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=quant_influxdb_token_dev
+      - INFLUXDB_ORG=quant_platform
+      - INFLUXDB_BUCKET=market_data
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    networks:
+      - quant-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Celery Worker - 异步任务执行
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: quant-celery-worker
+    environment:
+      - DATABASE_URL=postgresql://quant_user:quant_password_dev@postgres:5432/quant_platform
+      - MONGODB_URL=mongodb://quant_user:quant_password_dev@mongodb:27017/quant_platform
+      - REDIS_URL=redis://:quant_password_dev@redis:6379/0
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=quant_influxdb_token_dev
+      - INFLUXDB_ORG=quant_platform
+      - INFLUXDB_BUCKET=market_data
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+      - postgres
+      - mongodb
+    networks:
+      - quant-network
+    command: celery -A app.celery_app worker --loglevel=info
+
+  # Frontend (开发环境)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: quant-frontend
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_WS_URL=ws://localhost:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - quant-network
+    command: npm start
+
+volumes:
+  postgres_data:
+  mongodb_data:
+  redis_data:
+  influxdb_data:
+
+networks:
+  quant-network:
+    driver: bridge

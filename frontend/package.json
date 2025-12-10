@@ -1,0 +1,53 @@
+{
+  "name": "quant-platform-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "个人量化投资平台 - 前端应用",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.21.1",
+    "antd": "^5.13.1",
+    "@ant-design/icons": "^5.2.6",
+    "zustand": "^4.4.7",
+    "axios": "^1.6.5",
+    "dayjs": "^1.11.10",
+    "echarts": "^5.4.3",
+    "echarts-for-react": "^3.0.2",
+    "@monaco-editor/react": "^4.6.0",
+    "socket.io-client": "^4.6.1",
+    "react-query": "^3.39.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.47",
+    "@types/react-dom": "^18.2.18",
+    "@types/node": "^20.10.7",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.11",
+    "@vitejs/plugin-react": "^4.2.1",
+    "eslint": "^8.56.0",
+    "eslint-plugin-react": "^7.33.2",
+    "@typescript-eslint/eslint-plugin": "^6.18.1",
+    "@typescript-eslint/parser": "^6.18.1",
+    "prettier": "^3.1.1"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "format": "prettier --write \"src/**/*.{ts,tsx,json,css}\""
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}

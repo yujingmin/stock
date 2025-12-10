@@ -1,0 +1,25 @@
+.backtesting-page {
+  padding: 24px;
+  background: #f0f2f5;
+  min-height: 100vh;
+}
+
+.backtesting-page .ant-card {
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  margin-bottom: 16px;
+}
+
+.backtesting-page .ant-statistic-title {
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.backtesting-page .ant-statistic-content {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.backtesting-page .ant-tabs-nav {
+  margin-bottom: 16px;
+}
