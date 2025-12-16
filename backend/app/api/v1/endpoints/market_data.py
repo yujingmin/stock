@@ -1,46 +1,173 @@
+"""
+市场数据API端点
+"""
+import io
+from typing import Optional, Dict, Any, List
+from fastapi import APIRouter, HTTPException, Body, Query
+from fastapi.responses import StreamingResponse
+import pandas as pd
+
+from app.services.market_data.hybrid_data_service import hybrid_data_service
+from app.services.market_data.indicator_calculator import IndicatorCalculator
+from app.services.market_data.screen_service import ScreenService
+from app.services.market_data.cache_service import MarketDataCacheService
+
+# 创建路由器
+router = APIRouter()
+
+# 初始化服务
+# 使用混合数据服务 (根据接口稳定性自动选择 akshare 或 mock 数据)
+data_service = hybrid_data_service
+indicator_calculator = IndicatorCalculator()
+screen_service = ScreenService()
+cache_service = MarketDataCacheService()
 
 
-@router.post("/screen", summary="筛选股票")
-async def screen_stocks(filter: StockScreenFilter = Body(...)):
+@router.get("/quote/{symbol}", summary="获取股票实时行情")
+async def get_stock_quote(symbol: str):
     """
-    根据条件筛选股票
+    获取股票实时行情数据
 
-    - **filter**: 筛选条件
-      - min_pe: 最小市盈率
-      - max_pe: 最大市盈率
-      - min_pb: 最小市净率
-      - max_pb: 最大市净率
-      - min_dividend_yield: 最小股息率(%)
-      - min_market_cap: 最小市值（亿元）
-
-    示例条件：市盈率 < 20 且股息率 > 3%
-    ```json
-    {
-        "max_pe": 20,
-        "min_dividend_yield": 3
-    }
-    ```
+    - **symbol**: 股票代码（如：000001）
     """
     try:
-        # 转换为字典
-        conditions = filter.dict(exclude_none=True)
+        # 尝试从缓存获取
+        cached_data = await cache_service.get_cached_data("realtime_quote", symbol)
+        if cached_data:
+            return cached_data
 
-        if not conditions:
-            raise HTTPException(status_code=400, detail="至少需要一个筛选条件")
+        # 从数据服务获取
+        quote_data = await data_service.get_stock_realtime_quote(symbol)
 
-        # 执行筛选
-        results = await screen_service.screen_stocks(conditions)
+        # 缓存数据
+        await cache_service.set_cached_data("realtime_quote", symbol, quote_data, ttl=10)
+
+        return quote_data
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取行情数据失败: {str(e)}")
+
+
+@router.get("/kline/{symbol}", summary="获取K线数据")
+async def get_stock_kline(
+    symbol: str,
+    period: str = Query("daily", description="周期: daily/weekly/monthly"),
+    start_date: Optional[str] = Query(None, description="开始日期 YYYYMMDD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYYMMDD"),
+    with_indicators: bool = Query(False, description="是否包含技术指标")
+):
+    """
+    获取股票K线历史数据
+
+    - **symbol**: 股票代码
+    - **period**: 周期（daily/weekly/monthly）
+    - **start_date**: 开始日期
+    - **end_date**: 结束日期
+    - **with_indicators**: 是否计算技术指标
+    """
+    try:
+        # 获取K线数据
+        df = await data_service.get_stock_hist_kline(
+            symbol, period, start_date, end_date
+        )
+
+        if df.empty:
+            raise HTTPException(status_code=404, detail="未找到K线数据")
+
+        # 计算技术指标
+        if with_indicators:
+            df = indicator_calculator.calculate_all_indicators(df)
+
+        # 转换为字典列表
+        data = df.to_dict('records')
 
         return {
-            "conditions": conditions,
-            "results": results,
-            "count": len(results)
+            "symbol": symbol,
+            "period": period,
+            "count": len(data),
+            "data": data
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"股票筛选失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取K线数据失败: {str(e)}")
+
+
+@router.get("/indicators/{symbol}", summary="获取股票指标")
+async def get_stock_indicators(symbol: str):
+    """
+    获取股票的财务指标
+
+    - **symbol**: 股票代码
+    """
+    try:
+        indicators = await data_service.get_stock_indicators(symbol)
+        return indicators
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取股票指标失败: {str(e)}")
+
+
+@router.get("/list", summary="获取股票列表")
+async def get_stock_list(
+    market: Optional[str] = Query(None, description="市场: 沪A/深A/北A/all")
+):
+    """
+    获取股票列表
+
+    - **market**: 市场代码（可选）
+    """
+    try:
+        stock_list = await data_service.get_stock_list(market)
+        return stock_list
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取股票列表失败: {str(e)}")
+
+
+@router.post("/sync/{symbol}", summary="同步历史数据")
+async def sync_historical_data(
+    symbol: str,
+    period: str = Query("daily", description="周期"),
+    years: int = Query(10, description="同步年数")
+):
+    """
+    同步股票历史数据到InfluxDB
+
+    - **symbol**: 股票代码
+    - **period**: 周期
+    - **years**: 同步年数
+    """
+    try:
+        # TODO: 实现数据同步到InfluxDB的逻辑
+        return {
+            "message": "数据同步功能开发中",
+            "symbol": symbol,
+            "period": period,
+            "years": years
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"同步历史数据失败: {str(e)}")
+
+
+@router.post("/screen", summary="筛选股票")
+async def screen_stocks(filter: Dict[str, Any] = Body(...)):
+    """
+    根据条件筛选股票
+    """
+    try:
+        results = await screen_service.screen_stocks(filter)
+
+        return {
+            "conditions": filter,
+            "results": results,
+            "count": len(results)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"筛选股票失败: {str(e)}")
 
 
 @router.post("/screen/rules", summary="保存筛选规则")
@@ -184,7 +311,7 @@ async def export_kline_data(
     """
     try:
         # 获取K线数据
-        df = await akshare_client.get_stock_hist_kline(
+        df = await data_service.get_stock_hist_kline(
             symbol, period, start_date, end_date
         )
 

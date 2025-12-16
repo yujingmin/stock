@@ -4,34 +4,149 @@ akshare 数据接入客户端
 """
 import akshare as ak
 import pandas as pd
+import numpy as np
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 import asyncio
-from functools import wraps
+from functools import wraps, lru_cache
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
+# 简单的内存缓存
+_cache = {}
+_cache_ttl = {}  # 缓存过期时间
 
-def retry_on_failure(max_retries: int = 3, delay: float = 1.0):
-    """装饰器：异常重试机制"""
+
+def get_from_cache(key: str) -> Optional[Any]:
+    """从缓存获取数据"""
+    if key in _cache:
+        # 检查是否过期
+        if time.time() < _cache_ttl.get(key, 0):
+            logger.debug(f"缓存命中: {key}")
+            return _cache[key]
+        else:
+            # 过期，删除缓存
+            del _cache[key]
+            del _cache_ttl[key]
+    return None
+
+
+def set_to_cache(key: str, value: Any, ttl: int = 60):
+    """设置缓存数据
+
+    Args:
+        key: 缓存键
+        value: 缓存值
+        ttl: 过期时间(秒)，默认60秒
+    """
+    _cache[key] = value
+    _cache_ttl[key] = time.time() + ttl
+    logger.debug(f"缓存已设置: {key}, TTL={ttl}秒")
+
+
+def clean_numeric_value(value: Any, default: float = 0.0) -> float:
+    """
+    清理数值,将NaN、Infinity等不合法值转换为默认值
+
+    Args:
+        value: 原始值
+        default: 默认值
+
+    Returns:
+        清理后的浮点数
+    """
+    try:
+        num = float(value)
+        # 检查是否为NaN或Infinity
+        if pd.isna(num) or np.isinf(num):
+            return default
+        return num
+    except (ValueError, TypeError):
+        return default
+
+
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    清理DataFrame中的NaN和Infinity值
+
+    Args:
+        df: 原始DataFrame
+
+    Returns:
+        清理后的DataFrame
+    """
+    # 替换NaN和Infinity为None（JSON中会变成null）
+    df = df.replace([np.inf, -np.inf], np.nan)
+    # 将数值列的NaN替换为0
+    numeric_columns = df.select_dtypes(include=[np.number]).columns
+    df[numeric_columns] = df[numeric_columns].fillna(0)
+    # 将字符串列的NaN替换为空字符串
+    string_columns = df.select_dtypes(include=['object']).columns
+    df[string_columns] = df[string_columns].fillna('')
+    return df
+
+
+def retry_on_failure(max_retries: int = 5, delay: float = 2.0, use_cache: bool = False, cache_ttl: int = 60):
+    """装饰器：异常重试机制
+
+    Args:
+        max_retries: 最大重试次数，增加到5次
+        delay: 基础延迟时间(秒)，增加到2秒
+        use_cache: 是否使用缓存
+        cache_ttl: 缓存过期时间(秒)
+    """
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
+            # 如果启用缓存，先尝试从缓存获取
+            if use_cache:
+                # 构建缓存键
+                cache_key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
+                cached_result = get_from_cache(cache_key)
+                if cached_result is not None:
+                    return cached_result
+
             last_exception = None
             for attempt in range(max_retries):
                 try:
-                    return await func(*args, **kwargs)
+                    result = await func(*args, **kwargs)
+
+                    # 成功后保存到缓存
+                    if use_cache:
+                        cache_key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
+                        set_to_cache(cache_key, result, cache_ttl)
+
+                    return result
+
                 except Exception as e:
                     last_exception = e
+                    error_msg = str(e)
+
+                    # 判断错误类型
+                    is_connection_error = any(keyword in error_msg.lower() for keyword in [
+                        'connection', 'timeout', 'network', 'remote', 'aborted'
+                    ])
+
                     logger.warning(
                         f"尝试 {attempt + 1}/{max_retries} 失败: {func.__name__}. "
-                        f"错误: {str(e)}"
+                        f"错误类型: {'网络连接错误' if is_connection_error else '其他错误'}. "
+                        f"错误详情: {error_msg[:100]}"
                     )
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(delay * (attempt + 1))
 
-            logger.error(f"{func.__name__} 在 {max_retries} 次尝试后仍然失败")
+                    if attempt < max_retries - 1:
+                        # 对于网络错误，使用指数退避策略
+                        if is_connection_error:
+                            wait_time = delay * (2 ** attempt)  # 指数退避: 2, 4, 8, 16秒
+                        else:
+                            wait_time = delay * (attempt + 1)  # 线性增长: 2, 4, 6, 8秒
+
+                        logger.info(f"等待 {wait_time} 秒后重试...")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.error(f"{func.__name__} 在 {max_retries} 次尝试后仍然失败")
+
             raise last_exception
         return wrapper
     return decorator
@@ -46,10 +161,10 @@ class AkShareClient:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
-    @retry_on_failure(max_retries=3)
+    @retry_on_failure(max_retries=5, delay=2.0, use_cache=True, cache_ttl=30)
     async def get_stock_realtime_quote(self, symbol: str) -> Dict[str, Any]:
         """
-        获取股票实时行情
+        获取股票实时行情（使用历史数据的最新一条）
 
         Args:
             symbol: 股票代码，如 "000001"（不带市场前缀）
@@ -58,37 +173,55 @@ class AkShareClient:
             实时行情数据字典
         """
         try:
-            # 获取实时行情快照
-            df = await self._run_in_executor(ak.stock_zh_a_spot_em)
+            # 获取最近3天的历史数据（确保能获取到最新交易日）
+            end_date = datetime.now().strftime("%Y%m%d")
+            start_date = (datetime.now() - timedelta(days=3)).strftime("%Y%m%d")
 
-            # 筛选指定股票
-            stock_data = df[df['代码'] == symbol]
+            # 使用stock_zh_a_hist获取历史数据
+            df = await self._run_in_executor(
+                ak.stock_zh_a_hist,
+                symbol=symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust=""
+            )
 
-            if stock_data.empty:
+            if df.empty:
                 raise ValueError(f"未找到股票代码: {symbol}")
 
-            # 转换为字典
-            data = stock_data.iloc[0].to_dict()
+            # 获取最新一条数据
+            latest = df.iloc[-1]
+
+            # 计算涨跌幅和涨跌额
+            if len(df) >= 2:
+                prev_close = clean_numeric_value(df.iloc[-2]['收盘'])
+            else:
+                prev_close = clean_numeric_value(latest['收盘'])
+
+            current_price = clean_numeric_value(latest['收盘'])
+            change_amount = current_price - prev_close
+            change_percent = (change_amount / prev_close * 100) if prev_close > 0 else 0.0
 
             return {
                 "symbol": symbol,
-                "name": data.get("名称", ""),
-                "price": float(data.get("最新价", 0)),
-                "change_percent": float(data.get("涨跌幅", 0)),
-                "change_amount": float(data.get("涨跌额", 0)),
-                "volume": float(data.get("成交量", 0)),
-                "amount": float(data.get("成交额", 0)),
-                "high": float(data.get("最高", 0)),
-                "low": float(data.get("最低", 0)),
-                "open": float(data.get("今开", 0)),
-                "close_yesterday": float(data.get("昨收", 0)),
+                "name": f"股票{symbol}",  # akshare的hist接口不返回名称
+                "price": current_price,
+                "change_percent": change_percent,
+                "change_amount": change_amount,
+                "volume": clean_numeric_value(latest['成交量']),
+                "amount": clean_numeric_value(latest['成交额']),
+                "high": clean_numeric_value(latest['最高']),
+                "low": clean_numeric_value(latest['最低']),
+                "open": clean_numeric_value(latest['开盘']),
+                "close_yesterday": prev_close,
                 "timestamp": datetime.now().isoformat(),
             }
         except Exception as e:
             logger.error(f"获取股票 {symbol} 实时行情失败: {str(e)}")
             raise
 
-    @retry_on_failure(max_retries=3)
+    @retry_on_failure(max_retries=5, delay=2.0, use_cache=True, cache_ttl=300)
     async def get_stock_hist_kline(
         self,
         symbol: str,
@@ -141,13 +274,14 @@ class AkShareClient:
                 "换手率": "turnover",
             })
 
-            return df
+            # 清理数据
+            return clean_dataframe(df)
 
         except Exception as e:
             logger.error(f"获取股票 {symbol} 历史K线失败: {str(e)}")
             raise
 
-    @retry_on_failure(max_retries=3)
+    @retry_on_failure(max_retries=5, delay=2.0, use_cache=True, cache_ttl=600)
     async def get_stock_financial_report(
         self,
         symbol: str,
@@ -188,13 +322,13 @@ class AkShareClient:
             else:
                 raise ValueError(f"不支持的报表类型: {report_type}")
 
-            return df
+            return clean_dataframe(df)
 
         except Exception as e:
             logger.error(f"获取股票 {symbol} 财务报表失败: {str(e)}")
             raise
 
-    @retry_on_failure(max_retries=3)
+    @retry_on_failure(max_retries=5, delay=2.0, use_cache=True, cache_ttl=300)
     async def get_stock_indicators(self, symbol: str) -> Dict[str, Any]:
         """
         获取股票主要指标
@@ -231,7 +365,7 @@ class AkShareClient:
             logger.error(f"获取股票 {symbol} 指标失败: {str(e)}")
             raise
 
-    @retry_on_failure(max_retries=3)
+    @retry_on_failure(max_retries=5, delay=2.0, use_cache=True, cache_ttl=3600)
     async def get_macro_indicator(
         self,
         indicator_type: str
@@ -261,13 +395,13 @@ class AkShareClient:
             else:
                 raise ValueError(f"不支持的宏观指标类型: {indicator_type}")
 
-            return df
+            return clean_dataframe(df)
 
         except Exception as e:
             logger.error(f"获取宏观指标 {indicator_type} 失败: {str(e)}")
             raise
 
-    @retry_on_failure(max_retries=3)
+    @retry_on_failure(max_retries=5, delay=2.0, use_cache=True, cache_ttl=3600)
     async def get_stock_list(self) -> List[Dict[str, str]]:
         """
         获取 A 股股票列表
@@ -295,3 +429,4 @@ class AkShareClient:
 
 # 全局客户端实例
 akshare_client = AkShareClient()
+# trigger reload 2025年12月11日 22:33:08

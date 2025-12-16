@@ -14,14 +14,21 @@ class Settings(BaseSettings):
 
     # 数据库配置
     DATABASE_URL: str = "postgresql://quant_user:quant_password_dev@localhost:5432/quant_platform"
-    MONGODB_URL: str = "mongodb://quant_user:quant_password_dev@localhost:27017/quant_platform"
-    REDIS_URL: str = "redis://:quant_password_dev@localhost:6379/0"
 
-    # InfluxDB 配置
+    # MongoDB 配置（可选）
+    MONGODB_URL: str = "mongodb://localhost:27017/quant_platform"
+    MONGODB_ENABLED: bool = False
+
+    # Redis 配置（可选）
+    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_ENABLED: bool = False
+
+    # InfluxDB 配置（可选）
     INFLUXDB_URL: str = "http://localhost:8086"
     INFLUXDB_TOKEN: str = "quant_influxdb_token_dev"
     INFLUXDB_ORG: str = "quant_platform"
     INFLUXDB_BUCKET: str = "market_data"
+    INFLUXDB_ENABLED: bool = False
 
     # JWT 配置
     JWT_SECRET_KEY: str = "your-secret-key-change-this-in-production"
@@ -49,6 +56,13 @@ class Settings(BaseSettings):
 
     # API 限流配置
     RATE_LIMIT_PER_MINUTE: int = 60
+
+    # AI 模型配置 (Claude API)
+    CLAUDE_API_KEY: str = ""
+    CLAUDE_API_BASE_URL: str = "https://api.anthropic.com"
+    CLAUDE_MODEL: str = "claude-3-5-sonnet-20241022"  # 默认使用 Claude 3.5 Sonnet
+    CLAUDE_MAX_TOKENS: int = 4096
+    CLAUDE_TEMPERATURE: float = 0.7
 
     class Config:
         env_file = ".env"

@@ -1,0 +1,47 @@
+# ==========核心Web框架（必需）==========
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# ==========数据库（必需）==========
+sqlalchemy==2.0.25
+asyncpg==0.29.0
+alembic==1.13.1
+
+# ==========认证与安全（必需）==========
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+cryptography==42.0.0
+
+# ==========HTTP 客户端==========
+httpx==0.26.0
+
+# ==========工具库==========
+python-dateutil==2.8.2
+pytz==2023.3.post1
+loguru==0.7.2
+
+# ==========以下为可选依赖，稍后单独安装==========
+
+# 数据处理（需要编译器）
+# pandas
+# numpy
+# akshare
+
+# 回测框架
+# backtrader
+
+# HTTP 客户端
+# aiohttp
+
+# 测试
+# pytest
+# pytest-asyncio
+# pytest-cov
+
+# 代码质量
+# black
+# flake8

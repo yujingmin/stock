@@ -93,3 +93,6 @@ nginx/ssl/*.pem
 *.key
 *.pem
 credentials.json
+
+# 临时问津
+nul
